@@ -19,6 +19,8 @@ servers yet available.
 """
 import unittest
 
+import set_avro_test_path
+
 # This test does import this code, to make sure it at least passes
 # compilation.
 from avro import ipc
@@ -28,10 +30,10 @@ class TestIPC(unittest.TestCase):
     pass
 
   def test_server_with_path(self):
-    client_with_custom_path = ipc.HTTPTransceiver('dummyserver.net', 80, '/service/article')
+    client_with_custom_path = ipc.HTTPTransceiver('apache.org', 80, '/service/article')
     self.assertEqual('/service/article', client_with_custom_path.req_resource)
 
-    client_with_default_path = ipc.HTTPTransceiver('dummyserver.net', 80)
+    client_with_default_path = ipc.HTTPTransceiver('apache.org', 80)
     self.assertEqual('/', client_with_default_path.req_resource)
 
 if __name__ == '__main__':

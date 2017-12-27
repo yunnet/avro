@@ -93,23 +93,22 @@ module Avro
       attr_reader :writer, :encoder, :datum_writer, :buffer_writer, :buffer_encoder, :sync_marker, :meta, :codec
       attr_accessor :block_count
 
-      def initialize(writer, datum_writer, writers_schema=nil, codec=nil)
+      def initialize(writer, datum_writer, writers_schema=nil, codec=nil, meta={})
         # If writers_schema is not present, presume we're appending
         @writer = writer
         @encoder = IO::BinaryEncoder.new(@writer)
         @datum_writer = datum_writer
+        @meta = meta
         @buffer_writer = StringIO.new('', 'w')
         @buffer_writer.set_encoding('BINARY') if @buffer_writer.respond_to?(:set_encoding)
         @buffer_encoder = IO::BinaryEncoder.new(@buffer_writer)
         @block_count = 0
 
-        @meta = {}
-
         if writers_schema
           @sync_marker = Writer.generate_sync_marker
           @codec = DataFile.get_codec(codec)
-          meta['avro.codec'] = @codec.codec_name.to_s
-          meta['avro.schema'] = writers_schema.to_s
+          @meta['avro.codec'] = @codec.codec_name.to_s
+          @meta['avro.schema'] = writers_schema.to_s
           datum_writer.writers_schema = writers_schema
           write_header
         else
@@ -119,12 +118,12 @@ module Avro
           # FIXME(jmhodges): collect arbitrary metadata
           # collect metadata
           @sync_marker = dfr.sync_marker
-          meta['avro.codec'] = dfr.meta['avro.codec']
+          @meta['avro.codec'] = dfr.meta['avro.codec']
           @codec = DataFile.get_codec(meta['avro.codec'])
 
           # get schema used to write existing file
           schema_from_file = dfr.meta['avro.schema']
-          meta['avro.schema'] = schema_from_file
+          @meta['avro.schema'] = schema_from_file
           datum_writer.writers_schema = Schema.parse(schema_from_file)
 
           # seek to the end of the file and prepare for writing
@@ -334,8 +333,48 @@ module Avro
       end
     end
 
+    class SnappyCodec
+      def codec_name; 'snappy'; end
+
+      def decompress(data)
+        load_snappy!
+        crc32 = data.slice(-4..-1).unpack('N').first
+        uncompressed = Snappy.inflate(data.slice(0..-5))
+
+        if crc32 == Zlib.crc32(uncompressed)
+          uncompressed
+        else
+          # older versions of avro-ruby didn't write the checksum, so if it
+          # doesn't match this must assume that it wasn't there and return
+          # the entire payload uncompressed.
+          Snappy.inflate(data)
+        end
+      rescue Snappy::Error
+        # older versions of avro-ruby didn't write the checksum, so removing
+        # the last 4 bytes may cause Snappy to fail. recover by assuming the
+        # payload is from an older file and uncompress the entire buffer.
+        Snappy.inflate(data)
+      end
+
+      def compress(data)
+        load_snappy!
+        crc32 = Zlib.crc32(data)
+        compressed = Snappy.deflate(data)
+        [compressed, crc32].pack('a*N')
+      end
+
+      private
+
+      def load_snappy!
+        require 'snappy' unless defined?(Snappy)
+      rescue LoadError
+        raise LoadError, "Snappy compression is not available, please install the `snappy` gem."
+      end
+    end
+
     DataFile.register_codec NullCodec
     DataFile.register_codec DeflateCodec
+    DataFile.register_codec SnappyCodec
 
     # TODO this constant won't be updated if you register another codec.
     # Deprecated in favor of Avro::DataFile::codecs

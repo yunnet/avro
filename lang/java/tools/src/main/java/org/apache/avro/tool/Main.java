@@ -17,6 +17,8 @@
  */
 package org.apache.avro.tool;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.TreeMap;
@@ -45,6 +47,7 @@ public class Main {
         new DataFileWriteTool(),
         new DataFileGetMetaTool(),
         new DataFileGetSchemaTool(),
+        new DataFileRepairTool(),
         new IdlTool(),
         new IdlToSchemataTool(),
         new RecodecTool(),
@@ -86,9 +89,19 @@ public class Main {
       }
     }
     System.err.print("Version ");
-    printStream(Main.class.getClassLoader().getResourceAsStream("VERSION.txt"));
+    InputStream versionInput = Main.class.getClassLoader().getResourceAsStream("VERSION.txt");
+    try {
+      printStream(versionInput);
+    } finally {
+      versionInput.close();
+    }
     System.err.print(" of ");
-    printStream(Main.class.getClassLoader().getResourceAsStream("NOTICE.txt"));
+    InputStream noticeInput = Main.class.getClassLoader().getResourceAsStream("META-INF/NOTICE");
+    try {
+      printHead(noticeInput, 5);
+    } finally {
+      noticeInput.close();
+    }
     System.err.println("----------------");
 
     System.err.println("Available tools:");
@@ -103,6 +116,17 @@ public class Main {
     byte[] buffer = new byte[1024];
     for (int i = in.read(buffer); i != -1; i = in.read(buffer))
       System.err.write(buffer, 0, i);
+  }
+
+  private static void printHead(InputStream in, int lines) throws Exception {
+    BufferedReader r = new BufferedReader(new InputStreamReader(in));
+    for (int i = 0; i < lines; i++) {
+      String line = r.readLine();
+      if (line == null) {
+        break;
+      }
+      System.err.println(line);
+    }
   }
 
 }

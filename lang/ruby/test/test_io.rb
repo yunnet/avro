@@ -21,45 +21,55 @@ class TestIO < Test::Unit::TestCase
   Schema = Avro::Schema
 
   def test_null
+    check('"null"')
     check_default('"null"', "null", nil)
   end
 
   def test_boolean
+    check('"boolean"')
     check_default('"boolean"', "true", true)
     check_default('"boolean"', "false", false)
   end
 
   def test_string
+    check('"string"')
     check_default('"string"', '"foo"', "foo")
   end
 
   def test_bytes
+    check('"bytes"')
     check_default('"bytes"', '"foo"', "foo")
   end
 
   def test_int
+    check('"int"')
     check_default('"int"', "5", 5)
   end
 
   def test_long
+    check('"long"')
     check_default('"long"', "9", 9)
   end
 
   def test_float
+    check('"float"')
     check_default('"float"', "1.2", 1.2)
   end
 
   def test_double
+    check('"double"')
     check_default('"double"', "1.2", 1.2)
   end
 
   def test_array
     array_schema = '{"type": "array", "items": "long"}'
+    check(array_schema)
     check_default(array_schema, "[1]", [1])
   end
 
   def test_map
     map_schema = '{"type": "map", "values": "long"}'
+    check(map_schema)
     check_default(map_schema, '{"a": 1}', {"a" => 1})
   end
 
@@ -70,6 +80,7 @@ class TestIO < Test::Unit::TestCase
        "fields": [{"name": "f",
                    "type": "long"}]}
 EOS
+    check(record_schema)
     check_default(record_schema, '{"f": 11}', {"f" => 11})
   end
 
@@ -80,11 +91,13 @@ EOS
        "fields": [{"name": "message",
                    "type": "string"}]}
 EOS
+    check(error_schema)
     check_default(error_schema, '{"message": "boom"}', {"message" => "boom"})
   end
 
   def test_enum
     enum_schema = '{"type": "enum", "name": "Test","symbols": ["A", "B"]}'
+    check(enum_schema)
     check_default(enum_schema, '"B"', "B")
   end
 
@@ -129,6 +142,7 @@ EOS
 
   def test_fixed
     fixed_schema = '{"type": "fixed", "name": "Test", "size": 1}'
+    check(fixed_schema)
     check_default(fixed_schema, '"a"', "a")
   end
 
@@ -193,6 +207,51 @@ EOS
       hex_val = avro_hexlify(buffer)
 
       assert_equal hex_encoding, hex_val
+    end
+  end
+
+  def test_utf8_string_encoding
+    [
+      "\xC3".force_encoding('ISO-8859-1'),
+      "\xC3\x83".force_encoding('UTF-8')
+    ].each do |value|
+      output = ''.force_encoding('BINARY')
+      encoder = Avro::IO::BinaryEncoder.new(StringIO.new(output))
+      datum_writer = Avro::IO::DatumWriter.new(Avro::Schema.parse('"string"'))
+      datum_writer.write(value, encoder)
+
+      assert_equal "\x04\xc3\x83".force_encoding('BINARY'), output
+    end
+  end
+
+  def test_bytes_encoding
+    [
+      "\xC3\x83".force_encoding('BINARY'),
+      "\xC3\x83".force_encoding('ISO-8859-1'),
+      "\xC3\x83".force_encoding('UTF-8')
+    ].each do |value|
+      output = ''.force_encoding('BINARY')
+      encoder = Avro::IO::BinaryEncoder.new(StringIO.new(output))
+      datum_writer = Avro::IO::DatumWriter.new(Avro::Schema.parse('"bytes"'))
+      datum_writer.write(value, encoder)
+
+      assert_equal "\x04\xc3\x83".force_encoding('BINARY'), output
+    end
+  end
+
+  def test_fixed_encoding
+    [
+      "\xC3\x83".force_encoding('BINARY'),
+      "\xC3\x83".force_encoding('ISO-8859-1'),
+      "\xC3\x83".force_encoding('UTF-8')
+    ].each do |value|
+      output = ''.force_encoding('BINARY')
+      encoder = Avro::IO::BinaryEncoder.new(StringIO.new(output))
+      schema = '{"type": "fixed", "name": "TwoBytes", "size": 2}'
+      datum_writer = Avro::IO::DatumWriter.new(Avro::Schema.parse(schema))
+      datum_writer.write(value, encoder)
+
+      assert_equal "\xc3\x83".force_encoding('BINARY'), output
     end
   end
 
@@ -281,10 +340,72 @@ EOS
       assert_equal(incorrect, 0)
     end
   end
+
+  def test_interchangeable_schemas
+    interchangeable_schemas = ['"string"', '"bytes"']
+    incorrect = 0
+    interchangeable_schemas.each_with_index do |ws, i|
+      writers_schema = Avro::Schema.parse(ws)
+      datum_to_write = 'foo'
+      readers_schema = Avro::Schema.parse(interchangeable_schemas[i == 0 ? 1 : 0])
+      writer, * = write_datum(datum_to_write, writers_schema)
+      datum_read = read_datum(writer, writers_schema, readers_schema)
+      if datum_read != datum_to_write
+        incorrect += 1
+      end
+    end
+    assert_equal(incorrect, 0)
+  end
+
+  def test_array_schema_promotion
+    writers_schema = Avro::Schema.parse('{"type":"array", "items":"int"}')
+    readers_schema = Avro::Schema.parse('{"type":"array", "items":"long"}')
+    datum_to_write = [1, 2]
+    writer, * = write_datum(datum_to_write, writers_schema)
+    datum_read = read_datum(writer, writers_schema, readers_schema)
+    assert_equal(datum_read, datum_to_write)
+  end
+
+  def test_map_schema_promotion
+    writers_schema = Avro::Schema.parse('{"type":"map", "values":"int"}')
+    readers_schema = Avro::Schema.parse('{"type":"map", "values":"long"}')
+    datum_to_write = { 'foo' => 1, 'bar' => 2 }
+    writer, * = write_datum(datum_to_write, writers_schema)
+    datum_read = read_datum(writer, writers_schema, readers_schema)
+    assert_equal(datum_read, datum_to_write)
+  end
+
+  def test_snappy_backward_compat
+    # a snappy-compressed block payload without the checksum
+    # this has no back-references, just one literal so the last 9
+    # bytes are the uncompressed payload.
+    old_snappy_bytes = "\x09\x20\x02\x06\x02\x0a\x67\x72\x65\x65\x6e"
+    uncompressed_bytes = "\x02\x06\x02\x0a\x67\x72\x65\x65\x6e"
+    snappy = Avro::DataFile::SnappyCodec.new
+    assert_equal(uncompressed_bytes, snappy.decompress(old_snappy_bytes))
+  end
+
   private
 
+  def check_no_default(schema_json)
+    actual_schema = '{"type": "record", "name": "Foo", "fields": []}'
+    actual = Avro::Schema.parse(actual_schema)
+
+    expected_schema = <<EOS
+      {"type": "record",
+       "name": "Foo",
+       "fields": [{"name": "f", "type": #{schema_json}}]}
+EOS
+    expected = Avro::Schema.parse(expected_schema)
+
+    reader = Avro::IO::DatumReader.new(actual, expected)
+    assert_raise Avro::AvroError do
+      value = reader.read(Avro::IO::BinaryDecoder.new(StringIO.new))
+      assert_not_equal(value, :no_default) # should never return this
+    end
+  end
+
   def check_default(schema_json, default_json, default_value)
-    check(schema_json)
     actual_schema = '{"type": "record", "name": "Foo", "fields": []}'
     actual = Avro::Schema.parse(actual_schema)
 
@@ -323,6 +444,9 @@ EOS
 
     # test writing of data to file
     check_datafile(schema)
+
+    # check that AvroError is raised when there is no default
+    check_no_default(str)
   end
 
   def checkser(schm, randomdata)

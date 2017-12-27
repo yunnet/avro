@@ -24,7 +24,6 @@ import static org.junit.Assert.fail;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.util.ConcurrentModificationException;
 import java.util.HashMap;
@@ -37,11 +36,11 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import org.apache.avro.Schema;
+import org.apache.avro.io.BinaryEncoder;
 import org.apache.avro.io.DecoderFactory;
-import org.apache.avro.io.DirectBinaryEncoder;
 import org.apache.avro.io.Encoder;
 import org.apache.avro.io.EncoderFactory;
-import org.apache.avro.io.JsonDecoder;
+import org.apache.avro.AvroTypeException;
 import org.junit.Test;
 import org.apache.avro.util.Utf8;
 
@@ -60,7 +59,7 @@ public class TestGenericDatumWriter {
     Encoder e = EncoderFactory.get().jsonEncoder(s, bao);
     w.write(r, e);
     e.flush();
-    
+
     Object o = new GenericDatumReader<GenericRecord>(s).read(null,
         DecoderFactory.get().jsonDecoder(s, new ByteArrayInputStream(bao.toByteArray())));
     assertEquals(r, o);
@@ -80,7 +79,7 @@ public class TestGenericDatumWriter {
 
     final TestEncoder e = new TestEncoder(EncoderFactory.get()
         .directBinaryEncoder(bao, null), sizeWrittenSignal, eltAddedSignal);
-    
+
     // call write in another thread
     ExecutorService executor = Executors.newSingleThreadExecutor();
     Future<Void> result = executor.submit(new Callable<Void>() {
@@ -102,7 +101,7 @@ public class TestGenericDatumWriter {
       assertTrue(ex.getCause() instanceof ConcurrentModificationException);
     }
   }
-  
+
 
   @Test
   public void testMapConcurrentModification() throws Exception {
@@ -118,7 +117,7 @@ public class TestGenericDatumWriter {
 
     final TestEncoder e = new TestEncoder(EncoderFactory.get()
         .directBinaryEncoder(bao, null), sizeWrittenSignal, eltAddedSignal);
-    
+
     // call write in another thread
     ExecutorService executor = Executors.newSingleThreadExecutor();
     Future<Void> result = executor.submit(new Callable<Void>() {
@@ -140,20 +139,20 @@ public class TestGenericDatumWriter {
       assertTrue(ex.getCause() instanceof ConcurrentModificationException);
     }
   }
-  
+
   static class TestEncoder extends Encoder {
-    
+
     Encoder e;
     CountDownLatch sizeWrittenSignal;
     CountDownLatch eltAddedSignal;
-    
+
     TestEncoder(Encoder encoder, CountDownLatch sizeWrittenSignal,
         CountDownLatch eltAddedSignal) {
       this.e = encoder;
       this.sizeWrittenSignal = sizeWrittenSignal;
       this.eltAddedSignal = eltAddedSignal;
     }
-    
+
     @Override
     public void writeArrayStart() throws IOException {
       e.writeArrayStart();
@@ -175,7 +174,7 @@ public class TestGenericDatumWriter {
         // ignore
       }
     }
-    
+
     @Override
     public void flush() throws IOException { e.flush(); }
     @Override
@@ -211,4 +210,88 @@ public class TestGenericDatumWriter {
     @Override
     public void writeIndex(int unionIndex) throws IOException { e.writeIndex(unionIndex); }
   };
+
+  @Test(expected=AvroTypeException.class)
+  public void writeDoesNotAllowStringForGenericEnum() throws IOException {
+    final String json = "{\"type\": \"record\", \"name\": \"recordWithEnum\"," +
+      "\"fields\": [ " +
+        "{\"name\": \"field\", \"type\": " +
+          "{\"type\": \"enum\", \"name\": \"enum\", \"symbols\": " +
+            "[\"ONE\",\"TWO\",\"THREE\"] " +
+          "}" +
+        "}" +
+      "]}";
+    Schema schema = Schema.parse(json);
+    GenericRecord record = new GenericData.Record(schema);
+    record.put("field", "ONE");
+
+    ByteArrayOutputStream bao = new ByteArrayOutputStream();
+    GenericDatumWriter<GenericRecord> writer =
+      new GenericDatumWriter<GenericRecord>(schema);
+    Encoder encoder = EncoderFactory.get().jsonEncoder(schema, bao);
+
+    writer.write(record, encoder);
+  }
+
+  private enum AnEnum { ONE, TWO, THREE };
+  @Test(expected=AvroTypeException.class)
+  public void writeDoesNotAllowJavaEnumForGenericEnum() throws IOException {
+    final String json = "{\"type\": \"record\", \"name\": \"recordWithEnum\"," +
+      "\"fields\": [ " +
+        "{\"name\": \"field\", \"type\": " +
+          "{\"type\": \"enum\", \"name\": \"enum\", \"symbols\": " +
+            "[\"ONE\",\"TWO\",\"THREE\"] " +
+          "}" +
+        "}" +
+      "]}";
+    Schema schema = Schema.parse(json);
+    GenericRecord record = new GenericData.Record(schema);
+    record.put("field", AnEnum.ONE);
+
+    ByteArrayOutputStream bao = new ByteArrayOutputStream();
+    GenericDatumWriter<GenericRecord> writer =
+      new GenericDatumWriter<GenericRecord>(schema);
+    Encoder encoder = EncoderFactory.get().jsonEncoder(schema, bao);
+
+    writer.write(record, encoder);
+  }
+
+  @Test
+  public void writeFieldWithDefaultWithExplicitNullDefaultInSchema() throws Exception {
+    Schema schema = schemaWithExplicitNullDefault();
+    GenericRecord record = createRecordWithDefaultField(schema);
+    writeObject(schema, record);
+  }
+
+  @Test
+  public void writeFieldWithDefaultWithoutExplicitNullDefaultInSchema() throws Exception {
+    Schema schema = schemaWithoutExplicitNullDefault();
+    GenericRecord record = createRecordWithDefaultField(schema);
+    writeObject(schema, record);
+  }
+
+  private Schema schemaWithExplicitNullDefault() {
+    String schema = "{\"type\":\"record\",\"name\":\"my_record\",\"namespace\":\"mytest.namespace\",\"doc\":\"doc\"," +
+            "\"fields\":[{\"name\":\"f\",\"type\":[\"null\",\"string\"],\"doc\":\"field doc doc\", " +
+            "\"default\":null}]}";
+    return new Schema.Parser().parse(schema);
+  }
+
+  private Schema schemaWithoutExplicitNullDefault() {
+    String schema = "{\"type\":\"record\",\"name\":\"my_record\",\"namespace\":\"mytest.namespace\",\"doc\":\"doc\"," +
+            "\"fields\":[{\"name\":\"f\",\"type\":[\"null\",\"string\"],\"doc\":\"field doc doc\"}]}";
+    return new Schema.Parser().parse(schema);
+  }
+
+  private void writeObject(Schema schema, GenericRecord datum) throws Exception {
+    BinaryEncoder encoder = EncoderFactory.get().binaryEncoder(new ByteArrayOutputStream(), null);
+    GenericDatumWriter<GenericData.Record> writer = new GenericDatumWriter<GenericData.Record>(schema);
+    writer.write(schema, datum, encoder);
+  }
+
+  private GenericRecord createRecordWithDefaultField(Schema schema) {
+    GenericRecord record = new GenericData.Record(schema);
+    record.put("f", schema.getField("f").defaultVal());
+    return record;
+  }
 }

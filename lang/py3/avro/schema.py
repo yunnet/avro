@@ -45,6 +45,7 @@ import json
 import logging
 import re
 
+logger = logging.getLogger(__name__) 
 
 # ------------------------------------------------------------------------------
 # Constants
@@ -447,7 +448,7 @@ class Names(object):
       raise SchemaParseException(
           'Avro name %r already exists.' % schema.fullname)
 
-    logging.log(DEBUG_VERBOSE, 'Register new name for %r', schema.fullname)
+    logger.log(DEBUG_VERBOSE, 'Register new name for %r', schema.fullname)
     self._names[schema.fullname] = schema
 
 
@@ -643,7 +644,7 @@ class PrimitiveSchema(Schema):
   Valid primitive types are defined in PRIMITIVE_TYPES.
   """
 
-  def __init__(self, type):
+  def __init__(self, type, other_props=None):
     """Initializes a new schema object for the specified primitive type.
 
     Args:
@@ -651,7 +652,7 @@ class PrimitiveSchema(Schema):
     """
     if type not in PRIMITIVE_TYPES:
       raise AvroException('%r is not a valid primitive type.' % type)
-    super(PrimitiveSchema, self).__init__(type)
+    super(PrimitiveSchema, self).__init__(type, other_props=other_props)
 
   @property
   def name(self):
@@ -752,7 +753,7 @@ class EnumSchema(NamedSchema):
         other_props=other_props,
     )
 
-    self._props['symbols'] = tuple(sorted(symbol_set))
+    self._props['symbols'] = symbols
     if doc is not None:
       self._props['doc'] = doc
 
@@ -1153,7 +1154,7 @@ def _SchemaFromJSONObject(json_object, names):
 
   if type in PRIMITIVE_TYPES:
     # FIXME should not ignore other properties
-    return PrimitiveSchema(type)
+    return PrimitiveSchema(type, other_props=other_props)
 
   elif type in NAMED_TYPES:
     name = json_object.get('name')

@@ -17,18 +17,23 @@
  */
 package org.apache.avro.specific;
 
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Collection;
 import java.util.List;
 import java.util.Set;
-import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.LinkedHashMap;
 import java.nio.ByteBuffer;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.ParameterizedType;
+import java.io.ObjectInput;
+import java.io.ObjectOutput;
 
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
 import org.apache.avro.Schema;
 import org.apache.avro.Protocol;
 import org.apache.avro.AvroRuntimeException;
@@ -38,12 +43,16 @@ import org.apache.avro.util.ClassUtils;
 import org.apache.avro.generic.GenericData;
 import org.apache.avro.io.DatumReader;
 import org.apache.avro.io.DatumWriter;
+import org.apache.avro.io.EncoderFactory;
+import org.apache.avro.io.BinaryEncoder;
+import org.apache.avro.io.DecoderFactory;
+import org.apache.avro.io.BinaryDecoder;
 
 /** Utilities for generated Java classes and interfaces. */
 public class SpecificData extends GenericData {
 
   private static final SpecificData INSTANCE = new SpecificData();
-  
+
   private static final Class<?>[] NO_ARG = new Class[]{};
   private static final Class<?>[] SCHEMA_ARG = new Class[]{Schema.class};
   private static final Map<Class,Constructor> CTOR_CACHE =
@@ -52,6 +61,25 @@ public class SpecificData extends GenericData {
   public static final String CLASS_PROP = "java-class";
   public static final String KEY_CLASS_PROP = "java-key-class";
   public static final String ELEMENT_PROP = "java-element-class";
+
+  /** List of Java reserved words from
+   * http://docs.oracle.com/javase/specs/jls/se8/html/jls-3.html#jls-3.9
+   * combined with the boolean and null literals.
+   * combined with the classnames used internally in the generated avro code.
+   */
+  public static final Set<String> RESERVED_WORDS = new HashSet<String>
+    (Arrays.asList(new String[] {
+        "abstract", "assert", "boolean", "break", "byte", "case", "catch",
+        "char", "class", "const", "continue", "default", "do", "double",
+        "else", "enum", "extends", "false", "final", "finally", "float",
+        "for", "goto", "if", "implements", "import", "instanceof", "int",
+        "interface", "long", "native", "new", "null", "package", "private",
+        "protected", "public", "return", "short", "static", "strictfp",
+        "super", "switch", "synchronized", "this", "throw", "throws",
+        "transient", "true", "try", "void", "volatile", "while",
+        /* classnames use internally by the avro code generator */
+        "Builder"
+      }));
 
   /** Read/write some common builtin classes as strings.  Representing these as
    * strings isn't always best, as they aren't always ordered ideally, but at
@@ -75,7 +103,7 @@ public class SpecificData extends GenericData {
   public SpecificData(ClassLoader classLoader) {
     super(classLoader);
   }
-  
+
   @Override
   public DatumReader createDatumReader(Schema schema) {
     return new SpecificDatumReader(schema, schema, this);
@@ -103,6 +131,8 @@ public class SpecificData extends GenericData {
   public Object createEnum(String symbol, Schema schema) {
     Class c = getClass(schema);
     if (c == null) return super.createEnum(symbol, schema); // punt to generic
+    if (RESERVED_WORDS.contains(symbol))
+      symbol += "$";
     return Enum.valueOf(c, symbol);
   }
 
@@ -179,17 +209,24 @@ public class SpecificData extends GenericData {
     return namespace + dot + name;
   }
 
-  private final WeakHashMap<java.lang.reflect.Type,Schema> schemaCache =
-    new WeakHashMap<java.lang.reflect.Type,Schema>();
+  private final LoadingCache<java.lang.reflect.Type,Schema> schemaCache =
+      CacheBuilder.newBuilder()
+          .weakKeys()
+          .build(new CacheLoader<java.lang.reflect.Type,Schema>() {
+            public Schema load(java.lang.reflect.Type type)
+                throws AvroRuntimeException {
+              return createSchema(type, new LinkedHashMap<String,Schema>());
+            }
+          });
 
   /** Find the schema for a Java type. */
   public Schema getSchema(java.lang.reflect.Type type) {
-    Schema schema = schemaCache.get(type);
-    if (schema == null) {
-      schema = createSchema(type, new LinkedHashMap<String,Schema>());
-      schemaCache.put(type, schema);
+    try {
+      return schemaCache.get(type);
+    } catch (Exception e) {
+      throw (e instanceof AvroRuntimeException) ?
+          (AvroRuntimeException)e.getCause() : new AvroRuntimeException(e);
     }
-    return schema;
   }
 
   /** Create the schema for a Java type. */
@@ -265,7 +302,7 @@ public class SpecificData extends GenericData {
     return super.getSchemaName(datum);
   }
 
-  /** True iff a class should be serialized with toString(). */ 
+  /** True iff a class should be serialized with toString(). */
   protected boolean isStringable(Class<?> c) {
     return stringableClasses.contains(c);
   }
@@ -296,7 +333,7 @@ public class SpecificData extends GenericData {
       return super.compare(o1, o2, s, eq);
     }
   }
-  
+
   /** Create an instance of a class.  If the class implements {@link
    * SchemaConstructable}, call a constructor with a {@link
    * org.apache.avro.Schema} parameter, otherwise use a no-arg constructor. */
@@ -317,14 +354,14 @@ public class SpecificData extends GenericData {
     }
     return result;
   }
-  
+
   @Override
   public Object createFixed(Object old, Schema schema) {
     Class c = getClass(schema);
     if (c == null) return super.createFixed(old, schema); // punt to generic
     return c.isInstance(old) ? old : newInstance(c, schema);
   }
-  
+
   @Override
   public Object newRecord(Object old, Schema schema) {
     Class c = getClass(schema);
@@ -337,5 +374,16 @@ public class SpecificData extends GenericData {
    * @see #newInstance
    */
   public interface SchemaConstructable {}
-  
+
+  /** Runtime utility used by generated classes. */
+  public static BinaryDecoder getDecoder(ObjectInput in) {
+    return DecoderFactory.get()
+      .directBinaryDecoder(new ExternalizableInput(in), null);
+  }
+  /** Runtime utility used by generated classes. */
+  public static BinaryEncoder getEncoder(ObjectOutput out) {
+    return EncoderFactory.get()
+      .directBinaryEncoder(new ExternalizableOutput(out), null);
+  }
+
 }

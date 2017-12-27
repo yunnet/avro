@@ -17,6 +17,7 @@
  */
 package org.apache.avro.tool;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.PrintStream;
@@ -27,11 +28,16 @@ import java.util.Iterator;
 
 import org.apache.avro.Schema;
 import org.apache.avro.file.DataFileReader;
+import org.apache.avro.file.DataFileStream;
 import org.apache.avro.generic.GenericDatumReader;
 import org.apache.trevni.avro.RandomData;
+import org.apache.trevni.TestUtil;
 
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 public class TestCreateRandomFileTool {
   private static final String COUNT = System.getProperty("test.count", "200");
@@ -41,14 +47,39 @@ public class TestCreateRandomFileTool {
   private static final File SCHEMA_FILE =
     new File("../../../share/test/schemas/weather.avsc");
 
-  private String run(List<String> args) throws Exception {
-    ByteArrayOutputStream baos = new ByteArrayOutputStream();
-    PrintStream p = new PrintStream(baos);
-    new CreateRandomFileTool().run(null, p, null, args);
-    return baos.toString("UTF-8").replace("\r", "");
+  private final Schema.Parser schemaParser = new Schema.Parser();
+
+  private ByteArrayOutputStream out;
+  private ByteArrayOutputStream err;
+
+  @Before
+  public void before() {
+    out = new ByteArrayOutputStream();
+    err = new ByteArrayOutputStream();
   }
-  
-  public void check(String... extraArgs) throws Exception {
+
+  @After
+  public void after() throws Exception {
+    out.close();
+    err.close();
+  }
+
+  private int run(List<String> args) throws Exception {
+    PrintStream output = new PrintStream(out);
+    PrintStream saveOut = System.out;
+    PrintStream error = new PrintStream(err);
+    PrintStream saveErr = System.err;
+    try {
+      System.setOut(output);
+      System.setErr(error);
+      return new CreateRandomFileTool().run(null, output, error, args);
+    } finally {
+      System.setOut(saveOut);
+      System.setErr(saveErr);
+    }
+  }
+
+  private void check(String... extraArgs) throws Exception {
     ArrayList<String> args = new ArrayList<String>();
     args.addAll(Arrays.asList(new String[] {
         OUT_FILE.toString(),
@@ -60,13 +91,24 @@ public class TestCreateRandomFileTool {
 
     DataFileReader<Object> reader =
       new DataFileReader(OUT_FILE, new GenericDatumReader<Object>());
-    
+
     Iterator<Object> found = reader.iterator();
     for (Object expected :
-           new RandomData(Schema.parse(SCHEMA_FILE), Integer.parseInt(COUNT)))
+           new RandomData(schemaParser.parse(SCHEMA_FILE), Integer.parseInt(COUNT)))
       assertEquals(expected, found.next());
 
     reader.close();
+  }
+
+  private void checkMissingCount(String... extraArgs) throws Exception {
+    ArrayList<String> args = new ArrayList<String>();
+    args.addAll(Arrays.asList(new String[] {
+            OUT_FILE.toString(),
+            "--schema-file", SCHEMA_FILE.toString()
+    }));
+    args.addAll(Arrays.asList(extraArgs));
+    run(args);
+    assertTrue(err.toString().contains("Need count (--count)"));
   }
 
   @Test
@@ -79,4 +121,28 @@ public class TestCreateRandomFileTool {
     check("--codec", "snappy");
   }
 
+  @Test
+  public void testMissingCountParameter() throws Exception {
+    checkMissingCount();
+  }
+
+  @Test
+  public void testStdOut() throws Exception {
+    TestUtil.resetRandomSeed();
+    run(Arrays.asList(new String[]
+            { "-", "--count", COUNT, "--schema-file", SCHEMA_FILE.toString() }));
+
+    byte[] file = out.toByteArray();
+
+    DataFileStream<Object> reader =
+      new DataFileStream(new ByteArrayInputStream(file),
+                         new GenericDatumReader<Object>());
+
+    Iterator<Object> found = reader.iterator();
+    for (Object expected :
+           new RandomData(schemaParser.parse(SCHEMA_FILE), Integer.parseInt(COUNT)))
+      assertEquals(expected, found.next());
+
+    reader.close();
+  }
 }

@@ -60,7 +60,7 @@ static const unsigned int count = 10;
 
 /**
  * A bunch of tests that share quite a lot of infrastructure between them.
- * The basic idea is to generate avro data for according to a schema and
+ * The basic idea is to generate avro data according to a schema and
  * then read back and compare the data with the original. But quite a few
  * variations are possible:
  * 1. While reading back, one can skip different data elements
@@ -1274,6 +1274,21 @@ static const TestData4 data4[] = {
         "[Rc1sI]",
         { "100", NULL }, 1 },
 
+    // Record of array of record with deleted field as last field
+    { "{\"type\":\"record\",\"name\":\"outer\",\"fields\":["
+        "{\"name\": \"g1\","
+            "\"type\":{\"type\":\"array\",\"items\":{"
+                "\"name\":\"item\",\"type\":\"record\",\"fields\":["
+                "{\"name\":\"f1\", \"type\":\"int\"},"
+                "{\"name\":\"f2\", \"type\": \"long\", \"default\": 0}]}}}]}", "[c1sIL]",
+        { "10", "11", NULL },
+        "{\"type\":\"record\",\"name\":\"outer\",\"fields\":["
+        "{\"name\": \"g1\","
+            "\"type\":{\"type\":\"array\",\"items\":{"
+                "\"name\":\"item\",\"type\":\"record\",\"fields\":["
+                "{\"name\":\"f1\", \"type\":\"int\"}]}}}]}", "R[c1sI]",
+        { "10", NULL }, 2 },
+
     // Enum resolution
     { "{\"type\":\"enum\",\"name\":\"e\",\"symbols\":[\"x\",\"y\",\"z\"]}",
         "e2",
@@ -1302,20 +1317,12 @@ static const TestData4 data4[] = {
         "[c2sU1IsU1I]", { "100", "100", NULL } ,
         "{\"type\":\"array\", \"items\": \"int\"}",
             "[c2sIsI]", { "100", "100", NULL }, 2 },
-    { "{\"type\":\"array\", \"items\":[ \"long\", \"int\"]}",
-        "[c1sU1Ic1sU1I]", { "100", "100", NULL } ,
-        "{\"type\":\"array\", \"items\": \"int\"}",
-            "[c1sIc1sI]", { "100", "100", NULL }, 2 },
 
     // Map of unions
     { "{\"type\":\"map\", \"values\":[ \"long\", \"int\"]}",
         "{c2sS10U1IsS10U1I}", { "k1", "100", "k2", "100", NULL } ,
         "{\"type\":\"map\", \"values\": \"int\"}",
             "{c2sS10IsS10I}", { "k1", "100", "k2", "100", NULL }, 2 },
-    { "{\"type\":\"map\", \"values\":[ \"long\", \"int\"]}",
-        "{c1sS10U1Ic1sS10U1I}", { "k1", "100", "k2", "100", NULL } ,
-        "{\"type\":\"map\", \"values\": \"int\"}",
-            "{c1sS10Ic1sS10I}", { "k1", "100", "k2", "100", NULL }, 2 },
 
     // Union + promotion
     { "\"int\"", "I", { "100", NULL },
@@ -1337,6 +1344,20 @@ static const TestData4 data4[] = {
         "{\"name\":\"f1\", \"type\":\"long\"},"
         "{\"name\":\"f3\", \"type\":\"double\"}]}", "BLD",
         { "1", "100", "10.75", NULL }, 1 },
+};
+
+static const TestData4 data4BinaryOnly[] = {
+    // Arrray of unions
+    { "{\"type\":\"array\", \"items\":[ \"long\", \"int\"]}",
+        "[c1sU1Ic1sU1I]", { "100", "100", NULL } ,
+        "{\"type\":\"array\", \"items\": \"int\"}",
+            "[c1sIc1sI]", { "100", "100", NULL }, 2 },
+
+    // Map of unions
+    { "{\"type\":\"map\", \"values\":[ \"long\", \"int\"]}",
+        "{c1sS10U1Ic1sS10U1I}", { "k1", "100", "k2", "100", NULL } ,
+        "{\"type\":\"map\", \"values\": \"int\"}",
+            "{c1sS10Ic1sS10I}", { "k1", "100", "k2", "100", NULL }, 2 },
 };
 
 #define COUNTOF(x)  sizeof(x) / sizeof(x[0])
@@ -1385,6 +1406,15 @@ struct JsonCodec {
     }
 };
 
+struct JsonPrettyCodec {
+    static EncoderPtr newEncoder(const ValidSchema& schema) {
+        return jsonPrettyEncoder(schema);
+    }
+    static DecoderPtr newDecoder(const ValidSchema& schema) {
+        return jsonDecoder(schema);
+    }
+};
+
 struct BinaryEncoderResolvingDecoderFactory : public BinaryEncoderFactory {
     static DecoderPtr newDecoder(const ValidSchema& schema) {
         return resolvingDecoder(schema, schema, binaryDecoder());
@@ -1393,6 +1423,21 @@ struct BinaryEncoderResolvingDecoderFactory : public BinaryEncoderFactory {
     static DecoderPtr newDecoder(const ValidSchema& writer,
         const ValidSchema& reader) {
         return resolvingDecoder(writer, reader, binaryDecoder());
+    }
+};
+
+struct JsonEncoderResolvingDecoderFactory {
+    static EncoderPtr newEncoder(const ValidSchema& schema) {
+        return jsonEncoder(schema);
+    }
+
+    static DecoderPtr newDecoder(const ValidSchema& schema) {
+        return resolvingDecoder(schema, schema, jsonDecoder(schema));
+    }
+
+    static DecoderPtr newDecoder(const ValidSchema& writer,
+        const ValidSchema& reader) {
+        return resolvingDecoder(writer, reader, jsonDecoder(writer));
     }
 };
 
@@ -1415,15 +1460,23 @@ void add_tests(boost::unit_test::test_suite& ts)
     ADD_TESTS(ts, BinaryCodecFactory, testCodec, data);
     ADD_TESTS(ts, ValidatingCodecFactory, testCodec, data);
     ADD_TESTS(ts, JsonCodec, testCodec, data);
+    ADD_TESTS(ts, JsonPrettyCodec, testCodec, data);
     ADD_TESTS(ts, BinaryEncoderResolvingDecoderFactory, testCodec, data);
+    ADD_TESTS(ts, JsonEncoderResolvingDecoderFactory, testCodec, data);
     ADD_TESTS(ts, ValidatingCodecFactory, testReaderFail, data2);
     ADD_TESTS(ts, ValidatingCodecFactory, testWriterFail, data2);
     ADD_TESTS(ts, BinaryEncoderResolvingDecoderFactory,
         testCodecResolving, data3);
+    ADD_TESTS(ts, JsonEncoderResolvingDecoderFactory,
+        testCodecResolving, data3);
     ADD_TESTS(ts, BinaryEncoderResolvingDecoderFactory,
+        testCodecResolving2, data4);
+    ADD_TESTS(ts, JsonEncoderResolvingDecoderFactory,
         testCodecResolving2, data4);
     ADD_TESTS(ts, ValidatingEncoderResolvingDecoderFactory,
         testCodecResolving2, data4);
+    ADD_TESTS(ts, BinaryEncoderResolvingDecoderFactory,
+        testCodecResolving2, data4BinaryOnly);
 
     ADD_TESTS(ts, ValidatingCodecFactory, testGeneric, data);
     ADD_TESTS(ts, ValidatingCodecFactory, testGenericResolving, data3);
@@ -1460,9 +1513,13 @@ static void testLimits(const EncoderPtr& e, const DecoderPtr& d)
         e->encodeDouble(std::numeric_limits<double>::infinity());
         e->encodeDouble(-std::numeric_limits<double>::infinity());
         e->encodeDouble(std::numeric_limits<double>::quiet_NaN());
+        e->encodeDouble(std::numeric_limits<double>::max());
+        e->encodeDouble(std::numeric_limits<double>::min());
         e->encodeFloat(std::numeric_limits<float>::infinity());
         e->encodeFloat(-std::numeric_limits<float>::infinity());
         e->encodeFloat(std::numeric_limits<float>::quiet_NaN());
+        e->encodeFloat(std::numeric_limits<float>::max());
+        e->encodeFloat(std::numeric_limits<float>::min());
         e->flush();
     }
 
@@ -1474,13 +1531,16 @@ static void testLimits(const EncoderPtr& e, const DecoderPtr& d)
         BOOST_CHECK_EQUAL(d->decodeDouble(),
             -std::numeric_limits<double>::infinity());
         BOOST_CHECK(boost::math::isnan(d->decodeDouble()));
+        BOOST_CHECK(d->decodeDouble() == std::numeric_limits<double>::max());
+        BOOST_CHECK(d->decodeDouble() == std::numeric_limits<double>::min());
         BOOST_CHECK_EQUAL(d->decodeFloat(),
             std::numeric_limits<float>::infinity());
         BOOST_CHECK_EQUAL(d->decodeFloat(),
             -std::numeric_limits<float>::infinity());
         BOOST_CHECK(boost::math::isnan(d->decodeFloat()));
+        BOOST_CHECK_CLOSE(d->decodeFloat(), std::numeric_limits<float>::max(), 0.00011);
+        BOOST_CHECK_CLOSE(d->decodeFloat(), std::numeric_limits<float>::min(), 0.00011);
     }
-
 }
 
 static void testLimitsBinaryCodec()
@@ -1494,12 +1554,17 @@ static void testLimitsJsonCodec()
         "{ \"name\": \"d1\", \"type\": \"double\" },"
         "{ \"name\": \"d2\", \"type\": \"double\" },"
         "{ \"name\": \"d3\", \"type\": \"double\" },"
+        "{ \"name\": \"d4\", \"type\": \"double\" },"
+        "{ \"name\": \"d5\", \"type\": \"double\" },"
         "{ \"name\": \"f1\", \"type\": \"float\" },"
         "{ \"name\": \"f2\", \"type\": \"float\" },"
-        "{ \"name\": \"f3\", \"type\": \"float\" }"
+        "{ \"name\": \"f3\", \"type\": \"float\" },"
+        "{ \"name\": \"f4\", \"type\": \"float\" },"
+        "{ \"name\": \"f5\", \"type\": \"float\" }"
     "]}";
     ValidSchema schema = parsing::makeValidSchema(s);
     testLimits(jsonEncoder(schema), jsonDecoder(schema));
+    testLimits(jsonPrettyEncoder(schema), jsonDecoder(schema));
 }
 
 struct JsonData {
@@ -1522,7 +1587,6 @@ static void testJson(const JsonData& data)
 {
     ValidSchema schema = parsing::makeValidSchema(data.schema);
     EncoderPtr e = jsonEncoder(schema);
-    
 }
 
 }   // namespace avro

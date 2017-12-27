@@ -23,8 +23,6 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
-import junit.framework.Assert;
-
 import org.apache.avro.AvroRuntimeException;
 import org.apache.avro.Foo;
 import org.apache.avro.Interop;
@@ -34,6 +32,7 @@ import org.apache.avro.Node;
 import org.apache.avro.ipc.specific.PageView;
 import org.apache.avro.ipc.specific.Person;
 import org.apache.avro.ipc.specific.ProductPage;
+import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -57,7 +56,7 @@ public class TestSpecificRecordBuilder {
     Assert.assertNull(builder.getFriends());
     Assert.assertFalse(builder.hasLanguages());
     Assert.assertNull(builder.getLanguages());
-    
+
     Person person = builder.build();
     Assert.assertEquals("James Gosling", person.getName().toString());
     Assert.assertEquals(new Integer(1955), person.getYearOfBirth());
@@ -69,11 +68,11 @@ public class TestSpecificRecordBuilder {
     Assert.assertEquals(2, person.getLanguages().size());
     Assert.assertEquals("English", person.getLanguages().get(0).toString());
     Assert.assertEquals("Java", person.getLanguages().get(1).toString());
-    
+
     // Test copy constructors:
     Assert.assertEquals(builder, Person.newBuilder(builder));
     Assert.assertEquals(person, Person.newBuilder(person).build());
-    
+
     Person.Builder builderCopy = Person.newBuilder(person);
     Assert.assertEquals("James Gosling", builderCopy.getName().toString());
     Assert.assertEquals(new Integer(1955), builderCopy.getYearOfBirth());
@@ -81,7 +80,7 @@ public class TestSpecificRecordBuilder {
     Assert.assertEquals("CA", builderCopy.getState().toString());
     Assert.assertNotNull(builderCopy.getFriends());  // friends should default to an empty list
     Assert.assertEquals(0, builderCopy.getFriends().size());
-    
+
     // Test clearing fields:
     builderCopy.clearFriends().clearCountry();
     Assert.assertFalse(builderCopy.hasFriends());
@@ -92,7 +91,7 @@ public class TestSpecificRecordBuilder {
     Assert.assertNotNull(person2.getFriends());
     Assert.assertTrue(person2.getFriends().isEmpty());
   }
-  
+
   @Test
   public void testUnions() {
     long datetime = 1234L;
@@ -106,15 +105,15 @@ public class TestSpecificRecordBuilder {
     Assert.assertEquals(datetime, p.getDatetime().longValue());
     Assert.assertEquals(ProductPage.class, p.getPageContext().getClass());
     Assert.assertEquals(product, ((ProductPage)p.getPageContext()).getProduct());
-    
+
     PageView p2 = PageView.newBuilder(p).build();
-    
+
     Assert.assertEquals(datetime, p2.getDatetime().longValue());
     Assert.assertEquals(ProductPage.class, p2.getPageContext().getClass());
     Assert.assertEquals(product, ((ProductPage)p2.getPageContext()).getProduct());
-    
+
     Assert.assertEquals(p, p2);
-    
+
   }
 
   @Test
@@ -136,7 +135,7 @@ public class TestSpecificRecordBuilder {
         .setStringField("MyInterop")
         .setUnionField(2.71828)
         .build();
-    
+
     Interop copy = Interop.newBuilder(interop).build();
     Assert.assertEquals(interop.getArrayField().size(), copy.getArrayField().size());
     Assert.assertEquals(interop.getArrayField(), copy.getArrayField());
@@ -154,7 +153,7 @@ public class TestSpecificRecordBuilder {
     Assert.assertEquals(interop.getUnionField(), copy.getUnionField());
     Assert.assertEquals(interop, copy);
   }
-  
+
   @Test(expected=org.apache.avro.AvroRuntimeException.class)
   public void attemptToSetNonNullableFieldToNull() {
     Person.newBuilder().setName(null);
@@ -202,11 +201,11 @@ public class TestSpecificRecordBuilder {
     }
     long durationNanos = System.nanoTime() - startTimeNanos;
     double durationMillis = durationNanos / 1e6d;
-    System.out.println("Built " + count + " records in " + durationMillis + "ms (" + 
-        (count / (durationMillis / 1000d)) + " records/sec, " + (durationMillis / count) + 
+    System.out.println("Built " + count + " records in " + durationMillis + "ms (" +
+        (count / (durationMillis / 1000d)) + " records/sec, " + (durationMillis / count) +
         "ms/record");
   }
-  
+
   @Ignore
   @Test
   public void testBuilderPerformanceWithDefaultValues() {
@@ -217,8 +216,8 @@ public class TestSpecificRecordBuilder {
     }
     long durationNanos = System.nanoTime() - startTimeNanos;
     double durationMillis = durationNanos / 1e6d;
-    System.out.println("Built " + count + " records in " + durationMillis + "ms (" + 
-        (count / (durationMillis / 1000d)) + " records/sec, " + (durationMillis / count) + 
+    System.out.println("Built " + count + " records in " + durationMillis + "ms (" +
+        (count / (durationMillis / 1000d)) + " records/sec, " + (durationMillis / count) +
         "ms/record");
   }
 
@@ -241,8 +240,8 @@ public class TestSpecificRecordBuilder {
     }
     long durationNanos = System.nanoTime() - startTimeNanos;
     double durationMillis = durationNanos / 1e6d;
-    System.out.println("Built " + count + " records in " + durationMillis + "ms (" + 
-        (count / (durationMillis / 1000d)) + " records/sec, " + (durationMillis / count) + 
+    System.out.println("Built " + count + " records in " + durationMillis + "ms (" +
+        (count / (durationMillis / 1000d)) + " records/sec, " + (durationMillis / count) +
         "ms/record");
   }
 }
